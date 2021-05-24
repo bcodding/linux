@@ -1128,9 +1128,6 @@ out:
 static int nfs4_init_server(struct nfs_server *server, struct fs_context *fc)
 {
 	struct nfs_fs_context *ctx = nfs_fc2context(fc);
-	struct xprtsec_parms xprtsec = {
-		.policy		= RPC_XPRTSEC_NONE,
-	};
 	struct rpc_timeout timeparms;
 	int error;
 
@@ -1162,7 +1159,7 @@ static int nfs4_init_server(struct nfs_server *server, struct fs_context *fc)
 				ctx->nfs_server.nconnect,
 				ctx->nfs_server.max_connect,
 				fc->net_ns,
-				&xprtsec);
+				&ctx->xprtsec);
 	if (error < 0)
 		return error;
 
@@ -1321,6 +1318,7 @@ int nfs4_update_server(struct nfs_server *server, const char *hostname,
 		.dstaddr	= sap,
 		.addrlen	= salen,
 		.servername	= hostname,
+		/* cel: bleh. We might need to pass TLS parameters here */
 	};
 	char buf[INET6_ADDRSTRLEN + 1];
 	struct sockaddr_storage address;

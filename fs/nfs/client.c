@@ -515,6 +515,7 @@ int nfs_create_rpc_client(struct nfs_client *clp,
 		.version	= clp->rpc_ops->version,
 		.authflavor	= flavor,
 		.cred		= cl_init->cred,
+		.xprtsec	= cl_init->xprtsec,
 	};
 
 	if (test_bit(NFS_CS_DISCRTRY, &clp->cl_flags))
@@ -680,9 +681,7 @@ static int nfs_init_server(struct nfs_server *server,
 		.cred = server->cred,
 		.nconnect = ctx->nfs_server.nconnect,
 		.init_flags = (1UL << NFS_CS_REUSEPORT),
-		.xprtsec = {
-			.policy = RPC_XPRTSEC_NONE,
-		},
+		.xprtsec = ctx->xprtsec,
 	};
 	struct nfs_client *clp;
 	int error;
