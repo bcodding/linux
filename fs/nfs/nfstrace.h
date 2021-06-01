@@ -1679,6 +1679,24 @@ TRACE_EVENT(nfs_fh_to_dentry,
 		)
 );
 
+TRACE_EVENT(nfs_mount_addr_err,
+	TP_PROTO(
+		const struct sockaddr *sap
+	),
+
+	TP_ARGS(sap),
+
+	TP_STRUCT__entry(
+		__array(unsigned char, addr, sizeof(struct sockaddr_in6))
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->addr, sap, sizeof(__entry->addr));
+	),
+
+	TP_printk("addr=%pISpc", __entry->addr)
+);
+
 TRACE_EVENT(nfs_mount_assign,
 	TP_PROTO(
 		const char *option,
