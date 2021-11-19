@@ -51,6 +51,18 @@
 
 struct tls_rec;
 
+struct tlsh_sock {
+	/* struct sock must remain the first field */
+	struct sock	th_sk;
+
+	int		th_bind_family;
+};
+
+static inline struct tlsh_sock *tlsh_sk(struct sock *sk)
+{
+	return (struct tlsh_sock *)sk;
+}
+
 /* Maximum data size carried in a TLS record */
 #define TLS_MAX_PAYLOAD_SIZE		((size_t)1 << 14)
 

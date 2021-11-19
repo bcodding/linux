@@ -348,6 +348,7 @@ struct sk_filter;
   *	@sk_txtime_report_errors: set report errors mode for SO_TXTIME
   *	@sk_txtime_unused: unused txtime flags
   *	@ns_tracker: tracker for netns reference
+  *	@sk_tlsh_priv: private data for TLS handshake upcall
   */
 struct sock {
 	/*
@@ -537,6 +538,8 @@ struct sock {
 #endif
 	struct rcu_head		sk_rcu;
 	netns_tracker		ns_tracker;
+
+	void			*sk_tlsh_priv;
 };
 
 enum sk_pacing {

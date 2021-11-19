@@ -42,6 +42,25 @@
 #define TLS_TX_ZEROCOPY_RO	3	/* TX zerocopy (only sendfile now) */
 #define TLS_RX_EXPECT_NO_PAD	4	/* Attempt opportunistic zero-copy */
 
+/* TLSH socket options */
+#define TLSH_PRIORITIES		1	/* Retrieve TLS priorities string */
+#define TLSH_PEERID		2	/* Retrieve pre-shared key */
+#define TLSH_HANDSHAKE_TYPE	3	/* Retrieve handshake type */
+#define TLSH_X509_CERTIFICATE	4	/* Retrieve x.509 certificate */
+#define TLSH_X509_PRIVKEY	5	/* Retrieve x.509 private key */
+
+#define TLSH_DEFAULT_PRIORITIES		(NULL)
+#define TLSH_NO_PEERID			(0)
+#define TLSH_NO_CERT			(0)
+#define TLSH_NO_KEY			(0)
+
+/* TLSH handshake types */
+enum tlsh_hs_type {
+	TLSH_TYPE_CLIENTHELLO_X509,
+	TLSH_TYPE_CLIENTHELLO_PSK,
+	TLSH_TYPE_CLIENTHELLO_ANON,
+};
+
 /* Supported versions */
 #define TLS_VERSION_MINOR(ver)	((ver) & 0xFF)
 #define TLS_VERSION_MAJOR(ver)	(((ver) >> 8) & 0xFF)

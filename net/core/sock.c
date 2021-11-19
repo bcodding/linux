@@ -3376,6 +3376,8 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	sk->sk_incoming_cpu = -1;
 	sk->sk_txrehash = SOCK_TXREHASH_DEFAULT;
 
+	sk->sk_tlsh_priv = NULL;
+
 	sk_rx_queue_clear(sk);
 	/*
 	 * Before updating sk_refcnt, we must commit prior changes to memory
