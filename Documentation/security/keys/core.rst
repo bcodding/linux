@@ -1628,23 +1628,21 @@ The structure has a number of fields, some of which are mandatory:
      as might happen when the userspace buffer is accessed.
 
 
-  *  ``int (*request_key)(struct key_construction *cons, const char *op, void *aux);``
+  *  ``int (*request_key)(struct key *authkey, void *aux);``
 
      This method is optional.  If provided, request_key() and friends will
      invoke this function rather than upcalling to /sbin/request-key to operate
      upon a key of this type.
 
      The aux parameter is as passed to request_key_async_with_auxdata() and
-     similar or is NULL otherwise.  Also passed are the construction record for
-     the key to be operated upon and the operation type (currently only
-     "create").
+     similar or is NULL otherwise.
 
      This method is permitted to return before the upcall is complete, but the
      following function must be called under all circumstances to complete the
      instantiation process, whether or not it succeeds, whether or not there's
      an error::
 
-	void complete_request_key(struct key_construction *cons, int error);
+	void complete_request_key(struct key *authkey, int error);
 
      The error parameter should be 0 on success, -ve on error.  The
      construction record is destroyed by this action and the authorisation key
@@ -1655,10 +1653,10 @@ The structure has a number of fields, some of which are mandatory:
      caller of request_key*().  complete_request_key() must be called prior to
      returning.
 
-     The key under construction and the authorisation key can be found in the
-     key_construction struct pointed to by cons:
+     The key under construction can be found in the request_key_auth struct
+     retrieved by calling get_request_key_auth() on the authkey.
 
-      *  ``struct key *key;``
+      *  ``struct key *target_key;``
 
      	 The key under construction.
 
