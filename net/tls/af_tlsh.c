@@ -241,8 +241,10 @@ static bool tlsh_handshake_done(struct sock *sk)
 		tlsh_sock_restore_locked(sk);
 
 		if (tlsh_crypto_info_initialized(sk)) {
+			trace_tlsh_handshake_ok(sk);
 			done(data, 0);
 		} else {
+			trace_tlsh_handshake_failed(sk);
 			done(data, -EACCES);
 		}
 	}
@@ -283,6 +285,8 @@ static int tlsh_release(struct socket *sock)
 
 	if (!sk)
 		return 0;
+
+	trace_tlsh_release(sock);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -366,6 +370,7 @@ static int tlsh_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	}
 
 	tsk->th_bind_family = uaddr->sa_family;
+	trace_tlsh_bind(sock);
 	return 0;
 }
 
@@ -387,6 +392,8 @@ static int tlsh_accept(struct socket *listener, struct socket *newsock, int flag
 	DECLARE_WAITQUEUE(wait, current);
 	long timeo;
 	int rc;
+
+	trace_tlsh_accept(listener);
 
 	rc = -EPERM;
 	if (!capable(CAP_NET_BIND_SERVICE))
@@ -431,6 +438,7 @@ static int tlsh_accept(struct socket *listener, struct socket *newsock, int flag
 	}
 
 	sock_graft(newsk, newsock);
+	trace_tlsh_newsock(newsock, newsk);
 
 out_release:
 	release_sock(sk);
@@ -451,6 +459,8 @@ out:
 static int tlsh_getname(struct socket *sock, struct sockaddr *uaddr, int peer)
 {
 	struct sock *sk = sock->sk;
+
+	trace_tlsh_getname(sock);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -488,6 +498,7 @@ static __poll_t tlsh_poll(struct file *file, struct socket *sock,
 			mask |= EPOLLIN | EPOLLRDNORM;
 		if (sk_is_readable(sk))
 			mask |= EPOLLIN | EPOLLRDNORM;
+		trace_tlsh_poll_listener(sock, mask);
 		return mask;
 	}
 
@@ -506,6 +517,7 @@ static __poll_t tlsh_poll(struct file *file, struct socket *sock,
 	if (sk->sk_err || !skb_queue_empty_lockless(&sk->sk_error_queue))
 		mask |= EPOLLERR;
 
+	trace_tlsh_poll(sock, mask);
 	return mask;
 }
 
@@ -541,6 +553,7 @@ static int tlsh_listen(struct socket *sock, int backlog)
 	sk->sk_state = TCP_LISTEN;
 	tlsh_register_listener(sk);
 
+	trace_tlsh_listen(sock);
 	rc = 0;
 
 out:
@@ -560,6 +573,8 @@ out:
 static int tlsh_shutdown(struct socket *sock, int how)
 {
 	struct sock *sk = sock->sk;
+
+	trace_tlsh_shutdown(sock);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -591,6 +606,8 @@ static int tlsh_setsockopt(struct socket *sock, int level, int optname,
 			   sockptr_t optval, unsigned int optlen)
 {
 	struct sock *sk = sock->sk;
+
+	trace_tlsh_setsockopt(sock);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -786,6 +803,8 @@ static int tlsh_getsockopt(struct socket *sock, int level, int optname,
 	struct sock *sk = sock->sk;
 	int ret;
 
+	trace_tlsh_getsockopt(sock);
+
 	switch (sk->sk_family) {
 	case AF_INET:
 		break;
@@ -836,6 +855,9 @@ static int tlsh_getsockopt(struct socket *sock, int level, int optname,
 static int tlsh_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
+	int ret;
+
+	trace_tlsh_sendmsg_start(sock, size);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -845,12 +867,19 @@ static int tlsh_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 		break;
 #endif
 	default:
-		return -EOPNOTSUPP;
+		ret = -EOPNOTSUPP;
+		goto out;
 	}
 
-	if (unlikely(inet_send_prepare(sk)))
-		return -EAGAIN;
-	return sk->sk_prot->sendmsg(sk, msg, size);
+	if (unlikely(inet_send_prepare(sk))) {
+		ret = -EAGAIN;
+		goto out;
+	}
+	ret = sk->sk_prot->sendmsg(sk, msg, size);
+
+out:
+	trace_tlsh_sendmsg_result(sock, ret);
+	return ret;
 }
 
 /**
@@ -868,6 +897,9 @@ static int tlsh_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 			int flags)
 {
 	struct sock *sk = sock->sk;
+	int ret;
+
+	trace_tlsh_recvmsg_start(sock, size);
 
 	switch (sk->sk_family) {
 	case AF_INET:
@@ -877,12 +909,17 @@ static int tlsh_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		break;
 #endif
 	default:
-		return -EOPNOTSUPP;
+		ret = -EOPNOTSUPP;
+		goto out;
 	}
 
 	if (likely(!(flags & MSG_ERRQUEUE)))
 		sock_rps_record_flow(sk);
-	return sock_common_recvmsg(sock, msg, size, flags);
+	ret = sock_common_recvmsg(sock, msg, size, flags);
+
+out:
+	trace_tlsh_recvmsg_result(sock, ret);
+	return ret;
 }
 
 static const struct proto_ops tlsh_proto_ops = {
@@ -953,6 +990,7 @@ int tlsh_pf_create(struct net *net, struct socket *sock, int protocol, int kern)
 	}
 
 	tlsh_sk(sk)->th_bind_family = AF_UNSPEC;
+	trace_tlsh_pf_create(sock);
 	return 0;
 
 err_sk_put:

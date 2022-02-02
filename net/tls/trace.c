@@ -2,6 +2,9 @@
 /* Copyright (C) 2019 Netronome Systems, Inc. */
 
 #include <linux/module.h>
+#include <linux/net.h>
+#include <net/sock.h>
+#include <net/tls.h>
 
 #ifndef __CHECKER__
 #define CREATE_TRACE_POINTS
