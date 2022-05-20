@@ -2617,6 +2617,7 @@ static void xs_tls_connect(struct work_struct *work)
 	/* This implicitly sends an RPC_AUTH_TLS probe */
 	lower_clnt = rpc_create(&args);
 	if (IS_ERR(lower_clnt)) {
+		trace_rpc_tls_unavailable(upper_clnt, upper_xprt);
 		clear_bit(XPRT_SOCK_CONNECTING, &upper_transport->sock_state);
 		xprt_clear_connecting(upper_xprt);
 		xprt_wake_pending_tasks(upper_xprt, PTR_ERR(lower_clnt));
@@ -2631,8 +2632,10 @@ static void xs_tls_connect(struct work_struct *work)
 	lower_xprt = xprt_get(rcu_dereference(lower_clnt->cl_xprt));
 	rcu_read_unlock();
 	status = xs_tls_handshake_sync(lower_xprt, &upper_xprt->xprtsec);
-	if (status)
+	if (status) {
+		trace_rpc_tls_not_started(upper_clnt, upper_xprt);
 		goto out_close;
+	}
 
 	status = xs_tls_finish_connecting(lower_xprt, upper_transport);
 	if (status)
