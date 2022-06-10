@@ -112,6 +112,15 @@ config USER_DECRYPTED_DATA
 
 	  If you are unsure as to whether this is required, answer N.
 
+config KEYAGENT
+	bool "KEYAGENT"
+	depends on KEYS
+	help
+	  This option allows persistent userland processes to answer
+	  request-key callouts.
+
+	  If you are unsure as to whether this is required, answer N.
+
 config KEY_DH_OPERATIONS
        bool "Diffie-Hellman operations on retained keys"
        depends on KEYS
