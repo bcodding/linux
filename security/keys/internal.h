@@ -373,4 +373,8 @@ static inline void key_check(const struct key *key)
 #define key_check(key) do {} while(0)
 
 #endif
+
+#ifdef CONFIG_KEYAGENT
+extern int keyagent_request_key(struct key *authkey, void *aux);
+#endif
 #endif /* _INTERNAL_H */

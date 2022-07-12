@@ -185,6 +185,7 @@ typedef struct siginfo {
 #define SI_SIGIO	-5		/* sent by queued SIGIO */
 #define SI_TKILL	-6		/* sent by tkill system call */
 #define SI_DETHREAD	-7		/* sent by execve() killing subsidiary threads */
+#define SI_KEYAGENT	-8		/* sent by request-key */
 #define SI_ASYNCNL	-60		/* sent by glibc async name lookup completion */
 
 #define SI_FROMUSER(siptr)	((siptr)->si_code <= 0)

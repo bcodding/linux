@@ -240,9 +240,18 @@ static int construct_key(struct key *key, const void *callout_info,
 	actor = call_sbin_request_key;
 	if (key->type->request_key)
 		actor = key->type->request_key;
+#ifdef CONFIG_KEYAGENT
+	else {
+		ret = keyagent_request_key(authkey, aux);
 
+		/* ENOKEY: no keyagents match on calling process' keyrings */
+		if (ret != -ENOKEY)
+			goto done;
+	}
+#endif
 	ret = actor(authkey, aux);
 
+done:
 	/* check that the actor called complete_request_key() prior to
 	 * returning an error */
 	WARN_ON(ret < 0 &&
