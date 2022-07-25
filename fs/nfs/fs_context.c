@@ -47,6 +47,7 @@ enum nfs_param {
 	Opt_addr,
 	Opt_bg,
 	Opt_bsize,
+	Opt_cert,
 	Opt_clientaddr,
 	Opt_cto,
 	Opt_fg,
@@ -69,6 +70,7 @@ enum nfs_param {
 	Opt_max_connect,
 	Opt_port,
 	Opt_posix,
+	Opt_privkey,
 	Opt_proto,
 	Opt_rdirplus,
 	Opt_rdma,
@@ -91,6 +93,8 @@ enum nfs_param {
 	Opt_vers,
 	Opt_wsize,
 	Opt_write,
+	Opt_xcert,
+	Opt_xprivkey,
 	Opt_xprtsec,
 };
 
@@ -147,6 +151,7 @@ static const struct fs_parameter_spec nfs_fs_parameters[] = {
 	fsparam_string("addr",		Opt_addr),
 	fsparam_flag  ("bg",		Opt_bg),
 	fsparam_u32   ("bsize",		Opt_bsize),
+	fsparam_string("cert",		Opt_cert),
 	fsparam_string("clientaddr",	Opt_clientaddr),
 	fsparam_flag_no("cto",		Opt_cto),
 	fsparam_flag  ("fg",		Opt_fg),
@@ -171,6 +176,7 @@ static const struct fs_parameter_spec nfs_fs_parameters[] = {
 	fsparam_string("nfsvers",	Opt_vers),
 	fsparam_u32   ("port",		Opt_port),
 	fsparam_flag_no("posix",	Opt_posix),
+	fsparam_string("privkey",	Opt_privkey),
 	fsparam_string("proto",		Opt_proto),
 	fsparam_flag_no("rdirplus",	Opt_rdirplus),
 	fsparam_flag  ("rdma",		Opt_rdma),
@@ -198,7 +204,9 @@ static const struct fs_parameter_spec nfs_fs_parameters[] = {
 	fsparam_string("vers",		Opt_vers),
 	fsparam_enum  ("write",		Opt_write, nfs_param_enums_write),
 	fsparam_u32   ("wsize",		Opt_wsize),
+	fsparam_u32   ("xcert",		Opt_xcert),
 	fsparam_string("xprtsec",	Opt_xprtsec),
+	fsparam_u32   ("xprivkey",	Opt_xprivkey),
 	{}
 };
 
@@ -717,6 +725,18 @@ static int nfs_fs_context_parse_param(struct fs_context *fc,
 			goto out_of_bounds;
 		ctx->minorversion = result.uint_32;
 		break;
+	case Opt_xcert:
+		trace_nfs_mount_assign(param->key, param->string);
+		if (result.uint_32 == TLSH_NO_CERT)
+			goto out_of_bounds;
+		ctx->xprtsec.cert_serial = result.uint_32;
+		break;
+	case Opt_xprivkey:
+		trace_nfs_mount_assign(param->key, param->string);
+		if (result.uint_32 == TLSH_NO_KEY)
+			goto out_of_bounds;
+		ctx->xprtsec.privkey_serial = result.uint_32;
+		break;
 
 		/*
 		 * options that take text values
@@ -741,6 +761,18 @@ static int nfs_fs_context_parse_param(struct fs_context *fc,
 		ret = nfs_parse_xprtsec_policy(fc, param);
 		if (ret < 0)
 			return ret;
+		break;
+	case Opt_cert:
+		trace_nfs_mount_assign(param->key, param->string);
+		kfree(ctx->certfile);
+		ctx->certfile = param->string;
+		param->string = NULL;
+		break;
+	case Opt_privkey:
+		trace_nfs_mount_assign(param->key, param->string);
+		kfree(ctx->privkeyfile);
+		ctx->privkeyfile = param->string;
+		param->string = NULL;
 		break;
 
 	case Opt_proto:
@@ -1512,6 +1544,8 @@ static int nfs_fs_context_dup(struct fs_context *fc, struct fs_context *src_fc)
 
 	__module_get(ctx->nfs_mod->owner);
 	ctx->client_address		= NULL;
+	ctx->certfile			= NULL;
+	ctx->privkeyfile		= NULL;
 	ctx->mount_server.hostname	= NULL;
 	ctx->nfs_server.export_path	= NULL;
 	ctx->nfs_server.hostname	= NULL;
@@ -1531,6 +1565,8 @@ static void nfs_fs_context_free(struct fs_context *fc)
 		if (ctx->nfs_mod)
 			put_nfs_version(ctx->nfs_mod);
 		kfree(ctx->client_address);
+		kfree(ctx->certfile);
+		kfree(ctx->privkeyfile);
 		kfree(ctx->mount_server.hostname);
 		kfree(ctx->nfs_server.export_path);
 		kfree(ctx->nfs_server.hostname);

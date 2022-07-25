@@ -503,6 +503,10 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 	default:
 		break;
 	}
+	if (clp->cl_certfile)
+		seq_printf(m, ",cert=%s", clp->cl_certfile);
+	if (clp->cl_privkeyfile)
+		seq_printf(m, ",privkey=%s", clp->cl_privkeyfile);
 
 	if (version != 4)
 		nfs_show_mountd_options(m, nfss, showdefaults);

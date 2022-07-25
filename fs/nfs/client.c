@@ -38,7 +38,7 @@
 #include <linux/sunrpc/bc_xprt.h>
 #include <linux/nsproxy.h>
 #include <linux/pid_namespace.h>
-
+#include <uapi/linux/tls.h>
 
 #include "nfs4_fs.h"
 #include "callback.h"
@@ -140,6 +140,45 @@ void unregister_nfs_version(struct nfs_subversion *nfs)
 }
 EXPORT_SYMBOL_GPL(unregister_nfs_version);
 
+static void nfs_xprtsec_key_get(key_serial_t id)
+{
+	if (id == TLSH_NO_CERT)
+		return;
+	/* Just bump the reference count */
+	lookup_user_key(id, 0, KEY_NEED_SEARCH);
+}
+
+static void nfs_xprtsec_key_put(key_serial_t id)
+{
+	key_ref_t key_ref;
+
+	if (id == TLSH_NO_CERT)
+		return;
+	key_ref = lookup_user_key(id, 0, KEY_NEED_SEARCH);
+	if (IS_ERR(key_ref))
+		return;
+	key_ref_put(key_ref);
+}
+
+static void nfs_copy_xprtsec(struct nfs_client *clp,
+			     const struct nfs_client_initdata *cl_init)
+{
+	clp->cl_xprtsec = cl_init->xprtsec;
+
+	nfs_xprtsec_key_get(clp->cl_xprtsec.cert_serial);
+	nfs_xprtsec_key_get(clp->cl_xprtsec.privkey_serial);
+	clp->cl_certfile = kstrdup(cl_init->certfile, GFP_KERNEL);
+	clp->cl_privkeyfile = kstrdup(cl_init->privkeyfile, GFP_KERNEL);
+}
+
+static void nfs_release_xprtsec(struct nfs_client *clp)
+{
+	nfs_xprtsec_key_put(clp->cl_xprtsec.cert_serial);
+	nfs_xprtsec_key_put(clp->cl_xprtsec.privkey_serial);
+	kfree(clp->cl_certfile);
+	kfree(clp->cl_privkeyfile);
+}
+
 /*
  * Allocate a shared client record
  *
@@ -184,7 +223,7 @@ struct nfs_client *nfs_alloc_client(const struct nfs_client_initdata *cl_init)
 	clp->cl_net = get_net(cl_init->net);
 
 	clp->cl_principal = "*";
-	clp->cl_xprtsec = cl_init->xprtsec;
+	nfs_copy_xprtsec(clp, cl_init);
 	return clp;
 
 error_cleanup:
@@ -246,6 +285,7 @@ void nfs_free_client(struct nfs_client *clp)
 	put_nfs_version(clp->cl_nfs_mod);
 	kfree(clp->cl_hostname);
 	kfree(clp->cl_acceptor);
+	nfs_release_xprtsec(clp);
 	kfree(clp);
 }
 EXPORT_SYMBOL_GPL(nfs_free_client);
@@ -682,6 +722,8 @@ static int nfs_init_server(struct nfs_server *server,
 		.nconnect = ctx->nfs_server.nconnect,
 		.init_flags = (1UL << NFS_CS_REUSEPORT),
 		.xprtsec = ctx->xprtsec,
+		.certfile = ctx->certfile,
+		.privkeyfile = ctx->privkeyfile,
 	};
 	struct nfs_client *clp;
 	int error;

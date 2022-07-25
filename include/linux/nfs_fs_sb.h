@@ -65,6 +65,8 @@ struct nfs_client {
 	unsigned int		cl_max_connect; /* max number of xprts allowed */
 	const char *		cl_principal;	/* used for machine cred */
 	struct xprtsec_parms	cl_xprtsec;	/* xprt security policy */
+	const char *		cl_certfile;
+	const char *		cl_privkeyfile;
 
 #if IS_ENABLED(CONFIG_NFS_V4)
 	struct list_head	cl_ds_clients; /* auth flavor data servers */
