@@ -11,4 +11,7 @@
 int __init tls_keys_init(void);
 int __exit tls_keys_exit(void);
 
+extern int tls_keys_client_hello_anon(struct socket *socket,
+				const char *peername, const char *priorities);
+
 #endif /* _TLS_KEYS_H */

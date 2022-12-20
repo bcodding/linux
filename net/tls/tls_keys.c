@@ -96,6 +96,86 @@ static inline unsigned long tls_ptr_hash(const void *ptr)
 #endif
 }
 
+/**
+ * tls_key_client_hello_anon - start a TLS handshake via a user mode helper
+ * @socket: connected socket on which to perform the handshake
+ * @peername: name of the remote peer
+ * @priorities: GnuTLS TLS priorities string
+ *
+ * Given a socket with initialized socket->file, stash the file pointer in
+ * the sfd_auth_array, and use request_key() for a tls_session key to allow
+ * the keys infrastructure to materialize a process that can:
+ *
+ * 	- use the passed token to receive the socket_fd (via tls_socket_fd)
+ * 	- perform a TLS handshake on that socket
+ * 	- instantiate the tls_session key so we can continue
+ *
+ * Return values:
+ *   %0: Success
+ *   %-ENOENT: No user agent is available
+ *   %-ENOMEM: Memory allocation failed
+ */
+int tls_keys_client_hello_anon(struct socket *socket,
+		const char *peername, const char *priorities)
+{
+	struct key *tls_key;
+	struct tls_keys_tls_session_info *info;
+	unsigned long file_ptr_hash;
+	int socket_fd, err = 0;
+	char key_desc[73];
+
+	/* we have socket->file already from xs_create_sock */
+	socket_fd = get_unused_fd_flags(O_CLOEXEC);
+	if (socket_fd < 0)
+		return socket_fd;
+
+	fd_install(socket_fd, get_file(socket->file));
+
+	file_ptr_hash = tls_ptr_hash(socket->file);
+
+	info = kzalloc(sizeof(*info), GFP_NOFS);
+	if (!info)
+		return -ENOMEM;
+
+	if (!peername || strlen(peername) == 0)
+		return -EINVAL;
+
+	strncpy(info->peername, peername, sizeof(info->peername));
+
+	if (priorities)
+		strncpy(info->priorities, priorities, sizeof(info->priorities));
+
+	info->operation = TLSK_OP_CLIENTHELLO;
+	info->operation_arg = TLSH_TYPE_CLIENTHELLO_ANON;
+
+	/* When userspace calls request_key() for the socket's fd, it can only
+	 * send a "const char *" as callout info.  Let's just do the conversion
+	 * for the socket_token here.
+	 */
+	snprintf(info->socket_token, sizeof(info->socket_token), "%lx", file_ptr_hash);
+
+	xa_store(&sfd_auth_array, file_ptr_hash, socket->file, GFP_NOFS);
+
+	/* We want a non-colliding key description: */
+	snprintf(key_desc, 73, "%lx:%s", file_ptr_hash & 0xffffffff, peername);
+
+	tls_key = request_key_with_auxdata(&key_type_tls_session, key_desc,
+						NULL, info, sizeof(*info), NULL);
+	if (IS_ERR(tls_key))
+		err = PTR_ERR(tls_key);
+	else
+		key_put(tls_key);
+
+	xa_erase(&sfd_auth_array, file_ptr_hash);
+
+	if (err)
+		sock_orphan(socket->sk);
+
+	kfree(info);
+	return err;
+}
+EXPORT_SYMBOL_GPL(tls_keys_client_hello_anon);
+
 int __init tls_keys_init(void)
 {
 	int err = 0;
