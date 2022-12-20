@@ -2629,7 +2629,7 @@ static void xs_tls_connect(struct work_struct *work)
 	/* RPC_AUTH_TLS probe was successful. Try a TLS handshake on
 	 * the lower xprt. */
 	rcu_read_lock();
-	lower_xprt = xprt_get(rcu_dereference(lower_clnt->cl_xprt));
+	lower_xprt = rcu_dereference(lower_clnt->cl_xprt);
 	rcu_read_unlock();
 	status = xs_tls_handshake_sync(lower_xprt, &upper_xprt->xprtsec);
 	if (status) {
