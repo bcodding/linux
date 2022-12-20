@@ -197,7 +197,7 @@ SYSCALL_DEFINE4(request_key, const char __user *, _type,
 			ret = PTR_ERR(callout_info);
 			goto error2;
 		}
-		callout_len = strlen(callout_info);
+		callout_len = strlen(callout_info) + 1;
 	}
 
 	/* get the destination keyring if specified */
