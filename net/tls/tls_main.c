@@ -44,6 +44,7 @@
 #include <net/snmp.h>
 #include <net/tls.h>
 #include <net/tls_toe.h>
+#include <net/tls_keys.h>
 
 #include "tls.h"
 
@@ -1156,15 +1157,21 @@ static int __init tls_register(void)
 	if (err)
 		goto err_pernet;
 
-	err = tls_device_init();
+	err = tls_keys_init();
 	if (err)
 		goto err_strp;
+
+	err = tls_device_init();
+	if (err)
+		goto err_keys;
 
 	tcp_register_ulp(&tcp_tls_ulp_ops);
 
 	sock_register(&tlsh_pf_ops);
 
 	return 0;
+err_keys:
+	tls_keys_exit();
 err_strp:
 	tls_strp_dev_exit();
 err_pernet:
@@ -1178,6 +1185,7 @@ static void __exit tls_unregister(void)
 	tcp_unregister_ulp(&tcp_tls_ulp_ops);
 	tls_strp_dev_exit();
 	tls_device_cleanup();
+	tls_keys_exit();
 	unregister_pernet_subsys(&tls_proc_ops);
 }
 

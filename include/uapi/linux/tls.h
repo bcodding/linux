@@ -61,6 +61,19 @@ enum tlsh_hs_type {
 	TLSH_TYPE_CLIENTHELLO_ANON,
 };
 
+enum tls_keys_tls_session_op {
+	TLSK_OP_CLIENTHELLO,
+	TLSK_OP_CMSG,
+};
+
+struct tls_keys_tls_session_info {
+	char peername[64];
+	char priorities[1024];
+	__u8 operation;
+	__u8 operation_arg;
+	char socket_token[17];
+};
+
 /* Supported versions */
 #define TLS_VERSION_MINOR(ver)	((ver) & 0xFF)
 #define TLS_VERSION_MAJOR(ver)	(((ver) >> 8) & 0xFF)
