@@ -49,6 +49,7 @@
 #include <net/tcp.h>
 #include <net/tls.h>
 #include <net/tlsh.h>
+#include <net/tls_keys.h>
 
 #include <linux/bvec.h>
 #include <linux/highmem.h>
@@ -2536,9 +2537,9 @@ static int xs_tls_handshake_sync(struct rpc_xprt *lower_xprt, struct xprtsec_par
 	lower_transport->xprt_err = -ETIMEDOUT;
 	switch (xprtsec->policy) {
 	case RPC_XPRTSEC_TLS_ANON:
-		rc = tls_client_hello_anon(lower_transport->sock,
-					   xs_tls_handshake_done, xprt_get(lower_xprt),
-					   TLSH_DEFAULT_PRIORITIES);
+		rc = tls_keys_client_hello_anon(lower_transport->sock,
+					   lower_xprt->servername, TLSH_DEFAULT_PRIORITIES);
+		goto out;
 		break;
 	case RPC_XPRTSEC_TLS_X509:
 		rc = tls_client_hello_x509(lower_transport->sock,
@@ -2605,6 +2606,7 @@ static void xs_tls_connect(struct work_struct *work)
 		},
 	};
 	unsigned int pflags = current->flags;
+	const struct cred *saved_cred;
 	struct rpc_clnt *lower_clnt;
 	struct rpc_xprt *lower_xprt;
 	int status;
@@ -2631,7 +2633,10 @@ static void xs_tls_connect(struct work_struct *work)
 	rcu_read_lock();
 	lower_xprt = rcu_dereference(lower_clnt->cl_xprt);
 	rcu_read_unlock();
+
+	saved_cred = override_creds(upper_clnt->cl_cred);
 	status = xs_tls_handshake_sync(lower_xprt, &upper_xprt->xprtsec);
+	revert_creds(saved_cred);
 	if (status) {
 		trace_rpc_tls_not_started(upper_clnt, upper_xprt);
 		goto out_close;
