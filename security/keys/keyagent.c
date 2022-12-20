@@ -83,6 +83,9 @@ int keyagent_request_key(struct key *authkey, void *aux)
 	const struct cred *cred = current_cred();
 	int ret;
 
+	if (!cred->session_keyring)
+		return -ENOKEY;
+
 	/* We must be careful not to touch authkey and aux if
 	 * returning -ENOKEY, since it will be reused.   */
 	rka = get_request_key_auth(authkey);
