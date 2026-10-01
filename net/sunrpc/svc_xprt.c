@@ -601,6 +601,7 @@ static bool svc_xprt_ready(struct svc_xprt *xprt)
  */
 void svc_xprt_enqueue(struct svc_xprt *xprt)
 {
+	struct svc_client_pool *cp;
 	struct svc_pool *pool;
 
 	if (!svc_xprt_ready(xprt))
@@ -615,25 +616,55 @@ void svc_xprt_enqueue(struct svc_xprt *xprt)
 		return;
 
 	pool = svc_pool_for_cpu(xprt->xpt_server);
+	cp = &xprt->xpt_client->cl_pool[pool->sp_id];
 
 	percpu_counter_inc(&pool->sp_sockets_queued);
 	xprt->xpt_qtime = ktime_get();
-	lwq_enqueue(&xprt->xpt_ready, &pool->sp_xprts);
+	lwq_enqueue(&xprt->xpt_ready, &cp->cp_xprts);
+	if (!test_and_set_bit(SVC_CP_QUEUED, &cp->cp_flags))
+		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
 
 	svc_pool_wake_idle_thread(pool);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_enqueue);
 
 /*
- * Dequeue the first transport, if there is one.
+ * Put @cp back on the pool's client queue if it still has ready
+ * transports.  Otherwise clear SVC_CP_QUEUED and look once more: an
+ * enqueue that found the bit set has left the client for us to queue.
+ */
+static void svc_client_pool_requeue(struct svc_pool *pool,
+				    struct svc_client_pool *cp)
+{
+	if (!lwq_empty(&cp->cp_xprts)) {
+		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
+		return;
+	}
+	clear_bit(SVC_CP_QUEUED, &cp->cp_flags);
+	smp_mb__after_atomic();
+	if (!lwq_empty(&cp->cp_xprts) &&
+	    !test_and_set_bit(SVC_CP_QUEUED, &cp->cp_flags))
+		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
+}
+
+/*
+ * Dequeue the next transport: one from the client at the head of the
+ * pool's client queue, which then goes to the tail if it has more.
  */
 static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
 {
-	struct svc_xprt	*xprt = NULL;
+	struct svc_client_pool *cp;
+	struct svc_xprt	*xprt;
 
-	xprt = lwq_dequeue(&pool->sp_xprts, struct svc_xprt, xpt_ready);
-	if (xprt)
-		svc_xprt_get(xprt);
+	do {
+		cp = lwq_dequeue(&pool->sp_clients, struct svc_client_pool,
+				 cp_ready);
+		if (!cp)
+			return NULL;
+		xprt = lwq_dequeue(&cp->cp_xprts, struct svc_xprt, xpt_ready);
+		svc_client_pool_requeue(pool, cp);
+	} while (!xprt);
+	svc_xprt_get(xprt);
 	return xprt;
 }
 
@@ -854,7 +885,7 @@ svc_thread_should_sleep(struct svc_rqst *rqstp)
 		return false;
 
 	/* was a socket queued? */
-	if (!lwq_empty(&pool->sp_xprts))
+	if (!lwq_empty(&pool->sp_clients))
 		return false;
 
 	/* are we shutting down? */
@@ -1280,26 +1311,49 @@ static int svc_close_list(struct svc_serv *serv, struct list_head *xprt_list, st
 	return ret;
 }
 
+/*
+ * Delete the ready transports of @net that are queued on @cp; the rest go
+ * back in their order.
+ */
+static void svc_client_pool_clean(struct svc_client_pool *cp, struct net *net)
+{
+	struct llist_node *q, **t1, *t2;
+	struct svc_xprt *xprt;
+
+	q = lwq_dequeue_all(&cp->cp_xprts);
+	lwq_for_each_safe(xprt, t1, t2, &q, xpt_ready) {
+		if (xprt->xpt_net == net) {
+			set_bit(XPT_CLOSE, &xprt->xpt_flags);
+			svc_delete_xprt(xprt);
+			xprt = NULL;
+		}
+	}
+	if (q)
+		lwq_enqueue_batch(q, &cp->cp_xprts);
+}
+
 static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
 {
-	struct svc_xprt *xprt;
 	int i;
 
 	for (i = 0; i < serv->sv_nrpools; i++) {
 		struct svc_pool *pool = &serv->sv_pools[i];
-		struct llist_node *q, **t1, *t2;
+		struct svc_client_pool *cp;
+		struct svc_client *cl;
+		struct llist_node *q;
 
-		q = lwq_dequeue_all(&pool->sp_xprts);
-		lwq_for_each_safe(xprt, t1, t2, &q, xpt_ready) {
-			if (xprt->xpt_net == net) {
-				set_bit(XPT_CLOSE, &xprt->xpt_flags);
-				svc_delete_xprt(xprt);
-				xprt = NULL;
-			}
+		q = lwq_dequeue_all(&pool->sp_clients);
+		while (q) {
+			cp = container_of(q, struct svc_client_pool, cp_ready.node);
+			q = q->next;
+			/* Deleting the last transport frees the client. */
+			cl = svc_client_get(cp->cp_client);
+			if (cl->cl_net == net || cl == serv->sv_anon_client)
+				svc_client_pool_clean(cp, net);
+			svc_client_pool_requeue(pool, cp);
+			svc_client_put(serv, cl);
 		}
-
-		if (q && lwq_enqueue_batch(q, &pool->sp_xprts))
-			svc_pool_wake_idle_thread(pool);
+		svc_pool_wake_idle_thread(pool);
 	}
 }
 
