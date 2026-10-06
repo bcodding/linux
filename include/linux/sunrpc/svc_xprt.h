@@ -59,6 +59,7 @@ struct svc_xprt {
 	unsigned long		xpt_flags;
 
 	struct svc_serv		*xpt_server;	/* service for transport */
+	struct svc_client	*xpt_client;	/* peer this transport belongs to */
 	atomic_t    	    	xpt_reserved;	/* space on outq that is rsvd */
 	atomic_t		xpt_nr_rqsts;	/* Number of requests */
 	struct mutex		xpt_mutex;	/* to serialize sending data */
@@ -171,6 +172,13 @@ int	svc_xprt_create(struct svc_serv *serv, const char *xprt_name,
 void	svc_xprt_destroy_all(struct svc_serv *serv, struct net *net,
 			     bool unregister);
 void	svc_xprt_received(struct svc_xprt *xprt);
+
+/* The class of an accepted transport; SVC_CLASS_* in svc.h. */
+static inline u32 svc_classify(const struct svc_xprt *xprt)
+{
+	return SVC_CLASS_NONE;
+}
+
 void	svc_xprt_enqueue(struct svc_xprt *xprt);
 void	svc_xprt_put(struct svc_xprt *xprt);
 void	svc_xprt_copy_addrs(struct svc_rqst *rqstp, struct svc_xprt *xprt);

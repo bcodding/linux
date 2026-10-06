@@ -58,6 +58,44 @@ enum {
 	SP_TASK_STARTING,	/* Task has started but not added to idle yet */
 };
 
+/*
+ * A group of transports that share turns at the service: those of one
+ * class in one network namespace, or of one peer address within a class.
+ * Ready transports are queued per client and per pool, and a pool
+ * dispatches round-robin across its queued clients, so a client's share
+ * of the service does not grow with its connection count.
+ */
+struct svc_client_pool {
+	struct lwq		cp_xprts;	/* ready transports */
+	struct lwq_node		cp_ready;	/* link in svc_pool.sp_clients */
+	unsigned long		cp_flags;
+	struct svc_client	*cp_client;
+};
+
+enum {
+	SVC_CP_QUEUED,	/* on sp_clients, or held by the thread that took it */
+};
+
+struct svc_client {
+	struct hlist_node	cl_hash;
+	refcount_t		cl_ref;
+	struct net		*cl_net;
+	u32			cl_class;
+	struct sockaddr_storage	cl_addr;	/* with SVC_CLASS_PER_ADDR; port ignored */
+	struct svc_client_pool	cl_pool[];	/* one per pool */
+};
+
+#define SVC_CLIENT_HASH_BITS	8
+
+/*
+ * Classes returned by svc_classify().  SVC_CLASS_NONE leaves the transport
+ * on the service's anonymous client; any other value names a client shared
+ * by every transport of that class, or, with SVC_CLASS_PER_ADDR set, one
+ * client per peer address within the class.
+ */
+#define SVC_CLASS_NONE		0
+#define SVC_CLASS_PER_ADDR	BIT_U32(31)
+
 
 /*
  * RPC service.
@@ -89,6 +127,10 @@ struct svc_serv {
 	bool			sv_is_pooled;	/* is this a pooled service? */
 	struct svc_pool *	sv_pools;	/* array of thread pools */
 	int			(*sv_threadfn)(void *data);
+
+	spinlock_t		sv_client_lock;	/* protects sv_client_hash */
+	struct hlist_head	sv_client_hash[1 << SVC_CLIENT_HASH_BITS];
+	struct svc_client	*sv_anon_client; /* transports without a peer */
 
 #if defined(CONFIG_SUNRPC_BACKCHANNEL)
 	struct lwq		sv_cb_list;	/* queue for callback requests
@@ -479,6 +521,7 @@ void		   svc_wake_up(struct svc_serv *);
 void		   svc_reserve(struct svc_rqst *rqstp, int space);
 void		   svc_pool_wake_idle_thread(struct svc_pool *pool);
 struct svc_pool   *svc_pool_for_cpu(struct svc_serv *serv);
+struct svc_client *svc_client_alloc(unsigned int nrpools, gfp_t gfp);
 char *		   svc_print_addr(struct svc_rqst *, char *, size_t);
 const char *	   svc_proc_name(const struct svc_rqst *rqstp);
 int		   svc_encode_result_payload(struct svc_rqst *rqstp,

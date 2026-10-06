@@ -9,8 +9,11 @@
 #include <linux/sched/mm.h>
 #include <linux/errno.h>
 #include <linux/freezer.h>
+#include <linux/hash.h>
 #include <linux/slab.h>
 #include <net/sock.h>
+#include <net/ip.h>
+#include <net/ipv6.h>
 #include <linux/sunrpc/addr.h>
 #include <linux/sunrpc/stats.h>
 #include <linux/sunrpc/svc_xprt.h>
@@ -163,6 +166,107 @@ void svc_xprt_deferred_close(struct svc_xprt *xprt)
 }
 EXPORT_SYMBOL_GPL(svc_xprt_deferred_close);
 
+static unsigned int svc_client_hash(const struct net *net, u32 class,
+				    const struct sockaddr *sa)
+{
+	u32 h = hash_ptr(net, 32) ^ class;
+
+	if (class & SVC_CLASS_PER_ADDR) {
+		switch (sa->sa_family) {
+		case AF_INET:
+			h = __ipv4_addr_hash(((const struct sockaddr_in *)sa)->sin_addr.s_addr, h);
+			break;
+		case AF_INET6:
+			h = __ipv6_addr_jhash(&((const struct sockaddr_in6 *)sa)->sin6_addr, h);
+			break;
+		}
+	}
+	return hash_32(h, SVC_CLIENT_HASH_BITS);
+}
+
+static struct svc_client *svc_client_get(struct svc_client *cl)
+{
+	refcount_inc(&cl->cl_ref);
+	return cl;
+}
+
+static void svc_client_put(struct svc_serv *serv, struct svc_client *cl)
+{
+	if (!refcount_dec_and_test(&cl->cl_ref))
+		return;
+	spin_lock_bh(&serv->sv_client_lock);
+	hlist_del(&cl->cl_hash);
+	spin_unlock_bh(&serv->sv_client_lock);
+	kfree(cl);
+}
+
+/* Caller holds sv_client_lock. */
+static struct svc_client *svc_client_find(struct hlist_head *head,
+					  const struct net *net, u32 class,
+					  const struct sockaddr *sa)
+{
+	struct svc_client *cl;
+
+	hlist_for_each_entry(cl, head, cl_hash)
+		if (cl->cl_net == net && cl->cl_class == class &&
+		    (!(class & SVC_CLASS_PER_ADDR) ||
+		     rpc_cmp_addr((struct sockaddr *)&cl->cl_addr, sa)) &&
+		    refcount_inc_not_zero(&cl->cl_ref))
+			return cl;
+	return NULL;
+}
+
+/*
+ * Bind @xprt to the client for its class.  Runs once per accepted
+ * transport, in process context, while the transport is still XPT_BUSY
+ * from svc_xprt_init(), so no enqueue can see the pointer change.  A
+ * transport of no class, one keyed by an address that is not IP, or one
+ * for which no client can be allocated, stays on the service's anonymous
+ * client.
+ */
+static void svc_client_bind(struct svc_serv *serv, struct svc_xprt *xprt)
+{
+	struct sockaddr *sa = (struct sockaddr *)&xprt->xpt_remote;
+	struct svc_client *cl, *new = NULL;
+	struct net *net = xprt->xpt_net;
+	struct hlist_head *head;
+	u32 class;
+
+	class = svc_classify(xprt);
+	if (class == SVC_CLASS_NONE)
+		return;
+	if ((class & SVC_CLASS_PER_ADDR) &&
+	    sa->sa_family != AF_INET && sa->sa_family != AF_INET6)
+		return;
+	head = &serv->sv_client_hash[svc_client_hash(net, class, sa)];
+
+	spin_lock_bh(&serv->sv_client_lock);
+	cl = svc_client_find(head, net, class, sa);
+	spin_unlock_bh(&serv->sv_client_lock);
+	if (!cl) {
+		new = svc_client_alloc(serv->sv_nrpools, GFP_KERNEL);
+		if (!new)
+			return;
+		new->cl_net = net;
+		new->cl_class = class;
+		if (class & SVC_CLASS_PER_ADDR)
+			memcpy(&new->cl_addr, sa, xprt->xpt_remotelen);
+
+		spin_lock_bh(&serv->sv_client_lock);
+		cl = svc_client_find(head, net, class, sa);
+		if (!cl) {
+			hlist_add_head(&new->cl_hash, head);
+			cl = new;
+			new = NULL;
+		}
+		spin_unlock_bh(&serv->sv_client_lock);
+		kfree(new);
+	}
+
+	svc_client_put(serv, xprt->xpt_client);
+	xprt->xpt_client = cl;
+}
+
 static void svc_xprt_free(struct kref *kref)
 {
 	struct svc_xprt *xprt =
@@ -170,6 +274,7 @@ static void svc_xprt_free(struct kref *kref)
 	struct module *owner = xprt->xpt_class->xcl_owner;
 	if (test_bit(XPT_CACHE_AUTH, &xprt->xpt_flags))
 		svcauth_unix_info_release(xprt);
+	svc_client_put(xprt->xpt_server, xprt->xpt_client);
 	put_cred(xprt->xpt_cred);
 	put_net_track(xprt->xpt_net, &xprt->ns_tracker);
 	/* See comment on corresponding get in xs_setup_bc_tcp(): */
@@ -200,6 +305,7 @@ void svc_xprt_init(struct net *net, struct svc_xprt_class *xcl,
 	xprt->xpt_ops = xcl->xcl_ops;
 	kref_init(&xprt->xpt_ref);
 	xprt->xpt_server = serv;
+	xprt->xpt_client = svc_client_get(serv->sv_anon_client);
 	INIT_LIST_HEAD(&xprt->xpt_list);
 	INIT_LIST_HEAD(&xprt->xpt_deferred);
 	INIT_LIST_HEAD(&xprt->xpt_users);
@@ -815,6 +921,8 @@ static bool svc_thread_wait_for_work(struct svc_rqst *rqstp, long timeo)
 
 static void svc_add_new_temp_xprt(struct svc_serv *serv, struct svc_xprt *newxpt)
 {
+	svc_client_bind(serv, newxpt);
+
 	spin_lock_bh(&serv->sv_lock);
 	set_bit(XPT_TEMP, &newxpt->xpt_flags);
 	list_add(&newxpt->xpt_list, &serv->sv_tempsocks);

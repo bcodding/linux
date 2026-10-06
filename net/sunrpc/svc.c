@@ -476,6 +476,30 @@ __svc_init_bc(struct svc_serv *serv)
 }
 #endif
 
+/**
+ * svc_client_alloc - allocate a service client
+ * @nrpools: number of thread pools in the service
+ * @gfp: allocation flags
+ *
+ * Return: the client, holding one reference, or %NULL.
+ */
+struct svc_client *svc_client_alloc(unsigned int nrpools, gfp_t gfp)
+{
+	struct svc_client *cl;
+	unsigned int i;
+
+	cl = kzalloc(struct_size(cl, cl_pool, nrpools), gfp);
+	if (!cl)
+		return NULL;
+	refcount_set(&cl->cl_ref, 1);
+	INIT_HLIST_NODE(&cl->cl_hash);
+	for (i = 0; i < nrpools; i++) {
+		lwq_init(&cl->cl_pool[i].cp_xprts);
+		cl->cl_pool[i].cp_client = cl;
+	}
+	return cl;
+}
+
 /*
  * Create an RPC service
  */
@@ -521,10 +545,18 @@ __svc_create(struct svc_program *prog, int nprogs, struct svc_stat *stats,
 
 	__svc_init_bc(serv);
 
+	spin_lock_init(&serv->sv_client_lock);
+	serv->sv_anon_client = svc_client_alloc(npools, GFP_KERNEL);
+	if (!serv->sv_anon_client) {
+		kfree(serv);
+		return NULL;
+	}
+
 	serv->sv_nrpools = npools;
 	serv->sv_pools =
 		kzalloc_objs(struct svc_pool, serv->sv_nrpools);
 	if (!serv->sv_pools) {
+		kfree(serv->sv_anon_client);
 		kfree(serv);
 		return NULL;
 	}
@@ -628,6 +660,7 @@ svc_destroy(struct svc_serv **servp)
 		percpu_counter_destroy(&pool->sp_sockets_queued);
 		percpu_counter_destroy(&pool->sp_threads_woken);
 	}
+	kfree(serv->sv_anon_client);
 	kfree(serv->sv_pools);
 	kfree(serv);
 }
