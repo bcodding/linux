@@ -73,6 +73,7 @@ static __net_exit void sunrpc_exit_net(struct net *net)
 {
 	struct sunrpc_net *sn = net_generic(net, sunrpc_net_id);
 
+	svc_classifier_exit_net(net);
 	rpc_pipefs_exit_net(net);
 	unix_gid_cache_destroy(net);
 	ip_map_cache_destroy(net);
@@ -121,6 +122,9 @@ init_sunrpc(void)
 #endif
 	svc_init_xprt_sock();	/* svc sock transport */
 	init_socket_xprt();	/* clnt sock transport */
+	err = svc_classifier_init_module();
+	if (err)
+		pr_warn("RPC: no BPF transport classifier (%d)\n", err);
 	return 0;
 
 out6:

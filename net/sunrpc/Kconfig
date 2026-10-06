@@ -16,6 +16,18 @@ config SUNRPC_SWAP
 	bool
 	depends on SUNRPC
 
+config SUNRPC_BPF_CLASSIFY
+	bool "BPF classification of RPC service transports"
+	depends on SUNRPC && BPF_SYSCALL && BPF_JIT
+	default y
+	help
+	  Let a BPF struct_ops program attached in a network namespace say
+	  which accepted transports of an RPC service (NFS, NLM, the NFSv4
+	  callback service) share turns at the service's threads.  With no
+	  program attached, dispatch is unchanged.
+
+	  If unsure, say Y.
+
 config RPCSEC_GSS_KRB5
 	tristate "Secure RPC: Kerberos V mechanism"
 	depends on SUNRPC && CRYPTO

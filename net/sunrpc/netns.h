@@ -34,6 +34,10 @@ struct sunrpc_net {
 	atomic_t pipe_users;
 	struct proc_dir_entry *use_gssp_proc;
 	struct proc_dir_entry *gss_krb5_enctypes;
+
+#if IS_ENABLED(CONFIG_SUNRPC_BPF_CLASSIFY)
+	struct svc_classifier __rcu *svc_classifier;
+#endif
 };
 
 extern unsigned int sunrpc_net_id;

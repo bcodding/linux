@@ -174,10 +174,25 @@ void	svc_xprt_destroy_all(struct svc_serv *serv, struct net *net,
 void	svc_xprt_received(struct svc_xprt *xprt);
 
 /* The class of an accepted transport; SVC_CLASS_* in svc.h. */
+#if IS_ENABLED(CONFIG_SUNRPC_BPF_CLASSIFY)
+u32	svc_classify(const struct svc_xprt *xprt);
+void	svc_classifier_exit_net(struct net *net);
+int	svc_classifier_init_module(void);
+#else
 static inline u32 svc_classify(const struct svc_xprt *xprt)
 {
 	return SVC_CLASS_NONE;
 }
+
+static inline void svc_classifier_exit_net(struct net *net)
+{
+}
+
+static inline int svc_classifier_init_module(void)
+{
+	return 0;
+}
+#endif
 
 void	svc_xprt_enqueue(struct svc_xprt *xprt);
 void	svc_xprt_put(struct svc_xprt *xprt);

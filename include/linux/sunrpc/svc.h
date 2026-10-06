@@ -96,6 +96,30 @@ struct svc_client {
 #define SVC_CLASS_NONE		0
 #define SVC_CLASS_PER_ADDR	BIT_U32(31)
 
+#define SVC_CLASSIFIER_NAME_MAX	16
+
+struct svc_xprt;
+
+/**
+ * struct svc_classifier - BPF struct_ops that classifies accepted transports
+ * @name: a label for the instance, set by the program and not interpreted
+ * @classify: called once per accepted transport, in process context, under
+ *	rcu_read_lock(), with the peer and local addresses set; returns an
+ *	SVC_CLASS_* value
+ *
+ * Attaching one binds it to the attaching task's network namespace, where
+ * it classifies every service's transports until it is detached; one per
+ * namespace.  Transports keep the class they were given when accepted.
+ */
+struct svc_classifier {
+	/* private: */
+	struct net	*net;
+
+	/* public: */
+	char		name[SVC_CLASSIFIER_NAME_MAX];
+	u32		(*classify)(const struct svc_xprt *xprt);
+};
+
 
 /*
  * RPC service.
