@@ -2038,20 +2038,27 @@ TRACE_EVENT(svc_xprt_dequeue,
 
 	TP_STRUCT__entry(
 		SVC_XPRT_ENDPOINT_FIELDS(rqst->rq_xprt)
+		__field(u32, class)
+		__field(bool, per_addr)
 		__field(unsigned long, wakeup)
 		__field(unsigned long, qtime)
 	),
 
 	TP_fast_assign(
 		ktime_t ktime = ktime_get();
+		u32 class = rqst->rq_xprt->xpt_client->cl_class;
 
 		SVC_XPRT_ENDPOINT_ASSIGNMENTS(rqst->rq_xprt);
+		__entry->class = class & ~SVC_CLASS_PER_ADDR;
+		__entry->per_addr = class & SVC_CLASS_PER_ADDR;
 		__entry->wakeup = ktime_to_us(ktime_sub(ktime, rqst->rq_qtime));
 		__entry->qtime = ktime_to_us(ktime_sub(ktime, rqst->rq_xprt->xpt_qtime));
 	),
 
-	TP_printk(SVC_XPRT_ENDPOINT_FORMAT " wakeup-us=%lu qtime-us=%lu",
-		SVC_XPRT_ENDPOINT_VARARGS, __entry->wakeup, __entry->qtime)
+	TP_printk(SVC_XPRT_ENDPOINT_FORMAT " class=%u%s wakeup-us=%lu qtime-us=%lu",
+		  SVC_XPRT_ENDPOINT_VARARGS,
+		  __entry->class, __entry->per_addr ? "+addr" : "",
+		  __entry->wakeup, __entry->qtime)
 );
 
 DECLARE_EVENT_CLASS(svc_xprt_event,
