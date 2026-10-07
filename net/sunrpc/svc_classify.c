@@ -36,16 +36,17 @@ u32 svc_classify(const struct svc_xprt *xprt)
 	return class;
 }
 
-/* Caller holds svc_classifier_lock. */
-static void svc_classifier_detach(struct svc_classifier *c)
+/* Caller holds svc_classifier_lock; the static key is dropped after. */
+static bool svc_classifier_detach(struct svc_classifier *c)
 {
 	struct sunrpc_net *sn;
 
 	if (!c->net)
-		return;
+		return false;
 	sn = net_generic(c->net, sunrpc_net_id);
 	RCU_INIT_POINTER(sn->svc_classifier, NULL);
 	c->net = NULL;
+	return true;
 }
 
 /**
@@ -58,13 +59,16 @@ void svc_classifier_exit_net(struct net *net)
 {
 	struct sunrpc_net *sn = net_generic(net, sunrpc_net_id);
 	struct svc_classifier *c;
+	bool detached = false;
 
 	spin_lock(&svc_classifier_lock);
 	c = rcu_dereference_protected(sn->svc_classifier,
 				      lockdep_is_held(&svc_classifier_lock));
 	if (c)
-		svc_classifier_detach(c);
+		detached = svc_classifier_detach(c);
 	spin_unlock(&svc_classifier_lock);
+	if (detached)
+		static_branch_dec(&svc_classify_key);
 }
 
 static int svc_classifier_reg(void *kdata, struct bpf_link *link)
@@ -86,14 +90,20 @@ static int svc_classifier_reg(void *kdata, struct bpf_link *link)
 		rcu_assign_pointer(sn->svc_classifier, c);
 	}
 	spin_unlock(&svc_classifier_lock);
+	if (!err)
+		static_branch_inc(&svc_classify_key);
 	return err;
 }
 
 static void svc_classifier_unreg(void *kdata, struct bpf_link *link)
 {
+	bool detached;
+
 	spin_lock(&svc_classifier_lock);
-	svc_classifier_detach(kdata);
+	detached = svc_classifier_detach(kdata);
 	spin_unlock(&svc_classifier_lock);
+	if (detached)
+		static_branch_dec(&svc_classify_key);
 	synchronize_rcu();
 }
 

@@ -166,6 +166,8 @@ void svc_xprt_deferred_close(struct svc_xprt *xprt)
 }
 EXPORT_SYMBOL_GPL(svc_xprt_deferred_close);
 
+DEFINE_STATIC_KEY_FALSE(svc_classify_key);
+
 static unsigned int svc_client_hash(const struct net *net, u32 class,
 				    const struct sockaddr *sa)
 {
@@ -627,17 +629,22 @@ void svc_xprt_enqueue(struct svc_xprt *xprt)
 		return;
 
 	pool = svc_pool_for_cpu(xprt->xpt_server);
-	cp = &xprt->xpt_client->cl_pool[pool->sp_id];
 
 	percpu_counter_inc(&pool->sp_sockets_queued);
 	xprt->xpt_qtime = ktime_get();
+	if (!static_branch_unlikely(&svc_classify_key)) {
+		lwq_enqueue(&xprt->xpt_ready, &pool->sp_xprts);
+		goto wake;
+	}
+
+	cp = &xprt->xpt_client->cl_pool[pool->sp_id];
 	if (READ_ONCE(xprt->xpt_flags) & SVC_XPT_CTRL_EVENTS)
 		lwq_enqueue(&xprt->xpt_ready, &cp->cp_ctrl);
 	else
 		lwq_enqueue(&xprt->xpt_ready, &cp->cp_xprts);
 	if (!test_and_set_bit(SVC_CP_QUEUED, &cp->cp_flags))
 		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
-
+wake:
 	svc_pool_wake_idle_thread(pool);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_enqueue);
@@ -697,7 +704,7 @@ static struct svc_xprt *svc_client_pool_dequeue(struct svc_client_pool *cp)
  * Dequeue the next transport from the pool's client queue: one from the
  * client at the head, which then goes to the tail if it has more.
  */
-static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
+static struct svc_xprt *svc_client_dequeue(struct svc_pool *pool)
 {
 	struct svc_client_pool *cp;
 	struct svc_xprt	*xprt;
@@ -711,6 +718,36 @@ static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
 		svc_client_pool_requeue(pool, cp);
 	} while (!xprt);
 	svc_xprt_get(xprt);
+	return xprt;
+}
+
+/*
+ * Dequeue the next transport.  Transports are queued flat on sp_xprts
+ * while no classifier is attached and by client otherwise; whichever
+ * queue is not in use is looked at first, so that what was queued
+ * before a switch is served promptly after it.
+ */
+static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
+{
+	struct svc_xprt	*xprt = NULL;
+
+	if (static_branch_unlikely(&svc_classify_key)) {
+		if (!lwq_empty(&pool->sp_xprts))
+			xprt = lwq_dequeue(&pool->sp_xprts, struct svc_xprt,
+					   xpt_ready);
+		if (xprt)
+			svc_xprt_get(xprt);
+		else
+			xprt = svc_client_dequeue(pool);
+		return xprt;
+	}
+	if (!lwq_empty(&pool->sp_clients))
+		xprt = svc_client_dequeue(pool);
+	if (!xprt) {
+		xprt = lwq_dequeue(&pool->sp_xprts, struct svc_xprt, xpt_ready);
+		if (xprt)
+			svc_xprt_get(xprt);
+	}
 	return xprt;
 }
 
@@ -931,7 +968,7 @@ svc_thread_should_sleep(struct svc_rqst *rqstp)
 		return false;
 
 	/* was a socket queued? */
-	if (!lwq_empty(&pool->sp_clients))
+	if (!lwq_empty(&pool->sp_xprts) || !lwq_empty(&pool->sp_clients))
 		return false;
 
 	/* are we shutting down? */
@@ -1394,6 +1431,7 @@ static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
 		struct svc_client *cl;
 		struct llist_node *q;
 
+		svc_xprt_lwq_clean(&pool->sp_xprts, net);
 		q = lwq_dequeue_all(&pool->sp_clients);
 		while (q) {
 			cp = container_of(q, struct svc_client_pool, cp_ready.node);

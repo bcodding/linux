@@ -8,6 +8,7 @@
 #ifndef SUNRPC_SVC_XPRT_H
 #define SUNRPC_SVC_XPRT_H
 
+#include <linux/jump_label.h>
 #include <linux/sunrpc/svc.h>
 
 struct module;
@@ -175,6 +176,9 @@ int	svc_xprt_create(struct svc_serv *serv, const char *xprt_name,
 void	svc_xprt_destroy_all(struct svc_serv *serv, struct net *net,
 			     bool unregister);
 void	svc_xprt_received(struct svc_xprt *xprt);
+
+/* Set while a classifier is attached anywhere: dispatch by client. */
+DECLARE_STATIC_KEY_FALSE(svc_classify_key);
 
 /* The class of an accepted transport; SVC_CLASS_* in svc.h. */
 #if IS_ENABLED(CONFIG_SUNRPC_BPF_CLASSIFY)
