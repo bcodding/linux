@@ -16,3 +16,4 @@ NFS
    nfsd-io-modes
    knfsd-stats
    reexport
+   rpc-server-clients
