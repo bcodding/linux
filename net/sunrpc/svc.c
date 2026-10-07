@@ -494,6 +494,7 @@ struct svc_client *svc_client_alloc(unsigned int nrpools, gfp_t gfp)
 	refcount_set(&cl->cl_ref, 1);
 	INIT_HLIST_NODE(&cl->cl_hash);
 	for (i = 0; i < nrpools; i++) {
+		lwq_init(&cl->cl_pool[i].cp_ctrl);
 		lwq_init(&cl->cl_pool[i].cp_xprts);
 		cl->cl_pool[i].cp_client = cl;
 	}

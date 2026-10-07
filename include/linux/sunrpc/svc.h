@@ -66,6 +66,7 @@ enum {
  * of the service does not grow with its connection count.
  */
 struct svc_client_pool {
+	struct lwq		cp_ctrl;	/* ready transports with a control event */
 	struct lwq		cp_xprts;	/* ready transports */
 	struct lwq_node		cp_ready;	/* link in svc_pool.sp_clients */
 	unsigned long		cp_flags;
@@ -74,6 +75,7 @@ struct svc_client_pool {
 
 enum {
 	SVC_CP_QUEUED,	/* on sp_clients, or held by the thread that took it */
+	SVC_CP_DATA_NEXT, /* last turn served a control event; data is owed */
 };
 
 struct svc_client {

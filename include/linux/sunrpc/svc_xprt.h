@@ -110,6 +110,9 @@ enum {
 				 */
 };
 
+/* events a client's queue serves ahead of its data */
+#define SVC_XPT_CTRL_EVENTS	(BIT(XPT_CONN) | BIT(XPT_CLOSE) | BIT(XPT_HANDSHAKE))
+
 /*
  * Maximum number of "tmp" connections - those without XPT_PEER_VALID -
  * permitted on any service.

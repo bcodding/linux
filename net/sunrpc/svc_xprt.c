@@ -631,13 +631,21 @@ void svc_xprt_enqueue(struct svc_xprt *xprt)
 
 	percpu_counter_inc(&pool->sp_sockets_queued);
 	xprt->xpt_qtime = ktime_get();
-	lwq_enqueue(&xprt->xpt_ready, &cp->cp_xprts);
+	if (READ_ONCE(xprt->xpt_flags) & SVC_XPT_CTRL_EVENTS)
+		lwq_enqueue(&xprt->xpt_ready, &cp->cp_ctrl);
+	else
+		lwq_enqueue(&xprt->xpt_ready, &cp->cp_xprts);
 	if (!test_and_set_bit(SVC_CP_QUEUED, &cp->cp_flags))
 		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
 
 	svc_pool_wake_idle_thread(pool);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_enqueue);
+
+static bool svc_client_pool_empty(struct svc_client_pool *cp)
+{
+	return lwq_empty(&cp->cp_ctrl) && lwq_empty(&cp->cp_xprts);
+}
 
 /*
  * Put @cp back on the pool's client queue if it still has ready
@@ -647,21 +655,47 @@ EXPORT_SYMBOL_GPL(svc_xprt_enqueue);
 static void svc_client_pool_requeue(struct svc_pool *pool,
 				    struct svc_client_pool *cp)
 {
-	if (!lwq_empty(&cp->cp_xprts)) {
+	if (!svc_client_pool_empty(cp)) {
 		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
 		return;
 	}
 	clear_bit(SVC_CP_QUEUED, &cp->cp_flags);
 	/* the clear is visible before the re-test; see svc_xprt_enqueue() */
 	smp_mb__after_atomic();
-	if (!lwq_empty(&cp->cp_xprts) &&
+	if (!svc_client_pool_empty(cp) &&
 	    !test_and_set_bit(SVC_CP_QUEUED, &cp->cp_flags))
 		lwq_enqueue(&cp->cp_ready, &pool->sp_clients);
 }
 
 /*
- * Dequeue the next transport: one from the client at the head of the
- * pool's client queue, which then goes to the tail if it has more.
+ * A client's control events go before its data, but not two turns in a
+ * row while data waits: a listener re-arms XPT_CONN after every accept
+ * and would otherwise hold the anonymous client's turns for as long as
+ * connections keep arriving.  Only the thread holding @cp touches
+ * SVC_CP_DATA_NEXT.
+ */
+static struct svc_xprt *svc_client_pool_dequeue(struct svc_client_pool *cp)
+{
+	struct svc_xprt *xprt = NULL;
+	bool data_owed;
+
+	data_owed = test_and_clear_bit(SVC_CP_DATA_NEXT, &cp->cp_flags);
+	if (!data_owed)
+		xprt = lwq_dequeue(&cp->cp_ctrl, struct svc_xprt, xpt_ready);
+	if (!xprt) {
+		xprt = lwq_dequeue(&cp->cp_xprts, struct svc_xprt, xpt_ready);
+		if (xprt || !data_owed)
+			return xprt;
+		xprt = lwq_dequeue(&cp->cp_ctrl, struct svc_xprt, xpt_ready);
+	}
+	if (xprt && !lwq_empty(&cp->cp_xprts))
+		set_bit(SVC_CP_DATA_NEXT, &cp->cp_flags);
+	return xprt;
+}
+
+/*
+ * Dequeue the next transport from the pool's client queue: one from the
+ * client at the head, which then goes to the tail if it has more.
  */
 static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
 {
@@ -673,7 +707,7 @@ static struct svc_xprt *svc_xprt_dequeue(struct svc_pool *pool)
 				 cp_ready);
 		if (!cp)
 			return NULL;
-		xprt = lwq_dequeue(&cp->cp_xprts, struct svc_xprt, xpt_ready);
+		xprt = svc_client_pool_dequeue(cp);
 		svc_client_pool_requeue(pool, cp);
 	} while (!xprt);
 	svc_xprt_get(xprt);
@@ -1324,15 +1358,15 @@ static int svc_close_list(struct svc_serv *serv, struct list_head *xprt_list, st
 }
 
 /*
- * Delete the ready transports of @net that are queued on @cp; the rest go
+ * Delete the ready transports of @net that are queued on @lq; the rest go
  * back in their order.
  */
-static void svc_client_pool_clean(struct svc_client_pool *cp, struct net *net)
+static void svc_xprt_lwq_clean(struct lwq *lq, struct net *net)
 {
 	struct llist_node *q, **t1, *t2;
 	struct svc_xprt *xprt;
 
-	q = lwq_dequeue_all(&cp->cp_xprts);
+	q = lwq_dequeue_all(lq);
 	lwq_for_each_safe(xprt, t1, t2, &q, xpt_ready) {
 		if (xprt->xpt_net == net) {
 			set_bit(XPT_CLOSE, &xprt->xpt_flags);
@@ -1341,7 +1375,13 @@ static void svc_client_pool_clean(struct svc_client_pool *cp, struct net *net)
 		}
 	}
 	if (q)
-		lwq_enqueue_batch(q, &cp->cp_xprts);
+		lwq_enqueue_batch(q, lq);
+}
+
+static void svc_client_pool_clean(struct svc_client_pool *cp, struct net *net)
+{
+	svc_xprt_lwq_clean(&cp->cp_ctrl, net);
+	svc_xprt_lwq_clean(&cp->cp_xprts, net);
 }
 
 static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
